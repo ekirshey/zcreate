@@ -1,12 +1,12 @@
 const std = @import("std");
 
 // Try to get directory and default to current directory if string not provided
-fn getTargetDirectory(dir_string: ?*const []const u8) !std.fs.Dir {
+fn getTargetDirectory(dir_string: ?[]const u8) !std.fs.Dir {
     if (dir_string) |path| {
-        if (std.fs.path.isAbsolute(path.*)) {
-            return try std.fs.openDirAbsolute(path.*, .{});
+        if (std.fs.path.isAbsolute(path)) {
+            return try std.fs.openDirAbsolute(path, .{});
         } else {
-            return std.fs.cwd().openDir(path.*, .{});
+            return std.fs.cwd().openDir(path, .{});
         }
     } else {
         return std.fs.cwd();
@@ -46,6 +46,10 @@ pub fn parseOption(options: *Options, arg: []const u8) void {
     }
 }
 
+pub fn isOptionalArg(arg: []const u8) bool {
+    return arg.len > 2 and std.mem.eql(u8, arg, "--");
+}
+
 pub fn main() !void {
     const stdout = std.io.getStdOut().writer();
     const stderr = std.io.getStdErr().writer();
@@ -58,46 +62,51 @@ pub fn main() !void {
 
     var options: Options = .{};
 
-    var project_name: ?*const [:0]const u8 = null;
-    var path_name: ?*const [:0]const u8 = null;
-    // Skip program name
-    for (args[1..]) |arg| {
-        // Long option
-        if (arg.len > 2 and std.mem.eql(u8, arg[0..2], "--")) {
-            parseOption(&options, arg[2..]);
+    var project_name: ?[]const u8 = null;
+    var path_name: ?[]const u8 = null;
+
+    // Process optionals
+    var arg_idx: usize = 1;
+    while (arg_idx < args.len and isOptionalArg(args[arg_idx])) : (arg_idx += 1) {
+        const arg = args[arg_idx];
+        parseOption(&options, arg[2..]);
+    }
+
+    // Process Required
+    while (arg_idx < args.len) : (arg_idx += 1) {
+        const arg = args[arg_idx];
+        if (project_name == null) {
+            project_name = arg;
         } else {
-            if (project_name == null) {
-                project_name = &arg;
-            } else {
-                path_name = &arg;
-            }
+            path_name = arg;
         }
     }
 
     if (project_name == null) {
-        try stderr.print("No project name specified", .{});
+        try stderr.print("No project name specified\n", .{});
+        try stderr.print("USAGE: zc [OPTION]... PROJECT_NAME [PROJECT_PATH]\n", .{});
         return error.InvalidProjectName;
     }
 
     var project_parent_dir = getTargetDirectory(path_name) catch |err| {
-        try stderr.print("Unable to open directory: {s}\n", .{project_name.?.*});
+        try stderr.print("Unable to open directory: {s}\n", .{project_name.?});
         return err;
     };
     defer project_parent_dir.close();
 
-    try stdout.print("Creating {s}\n", .{project_name.?.*});
+    try stdout.print("Creating {s}\n", .{project_name.?});
 
-    if (subDirectoryExists(project_parent_dir, project_name.?.*)) {
+    if (subDirectoryExists(project_parent_dir, project_name.?)) {
         if (options.clean == true) {
-            try project_parent_dir.deleteTree(project_name.?.*);
+            try project_parent_dir.deleteTree(project_name.?);
         } else {
             try stderr.print("Unable to create new directory, path already exists\n", .{});
             return error.PathAlreadyExists;
         }
     }
 
-    var project_dir = project_parent_dir.makeOpenPath(project_name.?.*, .{}) catch |err| {
-        try stderr.print("Error: Unable to create directory: {s}\n", .{path_name.?.*});
+    var project_dir = project_parent_dir.makeOpenPath(project_name.?, .{}) catch |err| {
+        try stderr.print("Error: Unable to create directory: {s}\n", .{path_name.?});
         return err;
     };
     defer project_dir.close();
